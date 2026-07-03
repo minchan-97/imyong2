@@ -196,3 +196,27 @@ def split_questions_llm(text: str, api_key: str, model: str = "gpt-4o-mini") -> 
 def is_scanned_pdf(text: str) -> bool:
     """추출 텍스트가 거의 비어있으면 스캔본(OCR 필요)으로 판단."""
     return len(text.strip()) < 20
+
+
+def split_passage_question(text: str):
+    """
+    한 문항 덩어리를 (지문, 발문)으로 분리 시도.
+    발문은 보통 '~시오/~인가/~쓰시오'로 끝나는 마지막 문장(들).
+    지문은 그 앞의 서술 부분. 완벽하지 않으니 사용자가 편집표에서 보정.
+    """
+    import re as _re
+    text = _re.sub(r"\s+", " ", text.strip())
+    # 발문 종결 패턴
+    q_end = _re.compile(r"[^.?!]*?(시오|하시오|쓰시오|인가|하는가|서술하라|설명하라|논하라)[.?]?")
+    matches = list(q_end.finditer(text))
+    if not matches:
+        return text, ""   # 발문 못 찾음 → 전체를 지문으로
+    # 마지막 매치를 발문으로, 그 앞을 지문으로
+    last = matches[-1]
+    q_start = last.start()
+    passage = text[:q_start].strip()
+    question = text[q_start:].strip()
+    # 지문이 너무 짧으면 분리 실패로 보고 통째 발문 취급
+    if len(passage) < 15:
+        return "", text
+    return passage, question
