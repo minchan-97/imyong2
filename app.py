@@ -90,26 +90,38 @@ if _existing:
 # ── pkl 복원(업로드) ───────────────────────────────────────
 st.sidebar.markdown("---")
 with st.sidebar.expander("📥 pkl 복원(업로드)"):
-    st.caption("다운받은 pkl 또는 백업 zip을 올려 data/에 복원")
-    _up = st.file_uploader("pkl 또는 zip", type=["pkl", "zip"], key="restore")
-    if _up is not None and st.button("복원 실행", key="restore_btn"):
+    st.caption("다운받은 pkl 또는 백업 zip을 올려 data/에 복원 "
+               "(모든 파일 선택 가능 — pkl이 안 보이면 파일앱/전체보기에서 선택)")
+    # type 제한 없음 → 사진 라이브러리·파일앱 등 모든 파일 선택 가능
+    _ups = st.file_uploader("pkl 또는 zip (여러 개 가능)", type=None,
+                            accept_multiple_files=True, key="restore")
+    if _ups and st.button("복원 실행", key="restore_btn"):
         import zipfile, io
-        try:
-            if _up.name.endswith(".zip"):
-                with zipfile.ZipFile(io.BytesIO(_up.read())) as z:
-                    for name in z.namelist():
-                        if name.endswith(".pkl"):
-                            with open(os.path.join(paths.BASE, os.path.basename(name)), "wb") as f:
-                                f.write(z.read(name))
-                st.success("zip 복원 완료")
-            else:
-                with open(os.path.join(paths.BASE, _up.name), "wb") as f:
-                    f.write(_up.read())
-                st.success(f"{_up.name} 복원 완료")
-            load_engine.clear()
-            st.rerun()
-        except Exception as e:
-            st.error(f"복원 실패: {e}")
+        done, skipped = [], []
+        for _up in _ups:
+            name = _up.name
+            try:
+                if name.lower().endswith(".zip"):
+                    with zipfile.ZipFile(io.BytesIO(_up.read())) as z:
+                        for inner in z.namelist():
+                            if inner.endswith(".pkl"):
+                                with open(os.path.join(paths.BASE, os.path.basename(inner)), "wb") as f:
+                                    f.write(z.read(inner))
+                                done.append(os.path.basename(inner))
+                elif name.lower().endswith(".pkl"):
+                    with open(os.path.join(paths.BASE, os.path.basename(name)), "wb") as f:
+                        f.write(_up.read())
+                    done.append(name)
+                else:
+                    skipped.append(name)
+            except Exception as e:
+                st.error(f"{name} 복원 실패: {e}")
+        if done:
+            st.success("복원 완료: " + ", ".join(done))
+        if skipped:
+            st.warning("pkl/zip 아니라 건너뜀: " + ", ".join(skipped))
+        load_engine.clear()
+        st.rerun()
 
 
 emb, som = load_engine(subject, _mtime(paths.emb_path(subject)), _mtime(paths.som_path(subject)))
