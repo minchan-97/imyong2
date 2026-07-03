@@ -34,3 +34,5 @@ def exam_path(subject):         return _p(f"{subject}_L5_exam.pkl")    # 수능�
 def common_chongron_path():     return _p("공통_교육과정총론.pkl")      # 전 과목 공유
 
 def exam_weak_path(subject): return _p(f"{subject}_exam_weak.pkl")  # 수능형 유형별 약점
+
+def passage_path(subject): return _p(f"{subject}_passages.pkl")  # 기출 지문 세트
