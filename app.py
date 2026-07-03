@@ -116,9 +116,9 @@ emb, som = load_engine(subject, _mtime(paths.emb_path(subject)), _mtime(paths.so
 
 st.title(f"📖 임용 4레이어 — {subject}")
 
-tab2, tab1, tab3, tab4, tab5, tabc = st.tabs(
+tab2, tab1, tab3, tab4, tab5, tabp, tabc = st.tabs(
     ["📚 자료·학습 (L2)", "📈 기출 패턴 (L1)", "🔎 트렌드 (L3)",
-     "📝 문제 풀기 (L4)", "🎯 수능형 연습 (L5)", "🕸️ 개념 지도"])
+     "📝 문제 풀기 (L4)", "🎯 수능형 연습 (L5)", "📜 지문 학습", "🕸️ 개념 지도"])
 
 # ══════════════════════════════════════════════════════════════
 # 탭 L2 — 자료 입력·학습
@@ -736,3 +736,106 @@ with tabc:
                 for item in buckets[dt]:
                     u = f" · {item['unit']}" if item.get("unit") else ""
                     st.write(f"- {item['text']} *(출처: {item['source']}{u})*")
+
+
+# ══════════════════════════════════════════════════════════════
+# 탭 지문 학습 — 기출 지문 세트 + 유사 클러스터링 + 유형 확정
+# ══════════════════════════════════════════════════════════════
+with tabp:
+    st.subheader("지문 학습 — 제시문 통으로 익히기")
+    st.caption("기출 지문을 통으로 보관(외우기용). 시스템이 유사 지문끼리 묶어주면 "
+               "→ 내가 유형을 확정(이름 붙이기/나누기). 생성 없음, 실제 지문만.")
+    from passage_cluster import PassageBank, cluster_passages, group_by_cluster
+    from file_ingest import extract_text, split_questions_rule, split_passage_question
+
+    pbank = PassageBank.load(paths.passage_path(subject), subject)
+    st.write(f"저장된 지문 세트: **{len(pbank.sets)}개** "
+             f"(유형 확정 {len(pbank.sets)-len(pbank.untyped())} / 미분류 {len(pbank.untyped())})")
+
+    # ── 지문 세트 추가 (파일 or 직접) ───────────────────────
+    with st.expander("➕ 지문 세트 넣기", expanded=(len(pbank.sets) == 0)):
+        upp = st.file_uploader("기출 파일(지문+문제)", type=["pdf", "docx", "txt"], key="p_file")
+        pc1, pc2, pc3 = st.columns(3)
+        pyear = pc1.number_input("연도", 2000, 2030, 2023, key="p_year")
+        plevel = pc2.selectbox("급", ["초등", "중등", "특수", "공통"], key="p_level")
+        psrc = pc3.text_input("출처(필수)", key="p_src")
+        if upp is not None:
+            try:
+                raw = extract_text(upp.name, upp.read())
+                chunks = split_questions_rule(raw)
+                st.write(f"**{len(chunks)}개 덩어리** — 각 덩어리를 지문/발문으로 분리해 확인")
+                import pandas as pd
+                rows = []
+                for ch in chunks:
+                    p, q = split_passage_question(ch)
+                    rows.append({"넣기": True, "지문": p, "발문": q})
+                df = pd.DataFrame(rows)
+                edited = st.data_editor(df, use_container_width=True,
+                                        num_rows="dynamic", key="p_editor")
+                if st.button("지문 세트 저장", type="primary", key="p_save"):
+                    if not psrc.strip():
+                        st.error("출처는 필수입니다.")
+                    else:
+                        added = 0
+                        for _, row in edited.iterrows():
+                            if not row["넣기"]:
+                                continue
+                            passage = str(row["지문"]).strip()
+                            quest = str(row["발문"]).strip()
+                            if not passage and not quest:
+                                continue
+                            # 지문 없으면 발문만이라도(수능형 아닌 기출)
+                            pbank.add(passage or quest,
+                                      [quest] if quest else [],
+                                      year=int(pyear), level=plevel,
+                                      source=psrc.strip())
+                            added += 1
+                        pbank.save(paths.passage_path(subject))
+                        st.success(f"{added}개 지문 세트 저장")
+                        st.rerun()
+            except Exception as e:
+                st.error(f"처리 실패: {e}")
+
+    # ── 유사 지문 클러스터링 → 유형 확정 ────────────────────
+    if len(pbank.sets) >= 4 and emb is not None:
+        st.markdown("---")
+        st.write("**🔗 유사 지문 자동 묶기 → 유형 확정**")
+        k = st.slider("묶음 개수", 2, min(12, len(pbank.sets)), 
+                      min(4, len(pbank.sets)), key="p_k")
+        if st.button("유사 지문 묶기", key="p_cluster"):
+            passages = [s["passage"] for s in pbank.sets]
+            labels, valid = cluster_passages(passages, emb, k=k)
+            groups = group_by_cluster(passages, labels, valid)
+            st.session_state["p_groups"] = {str(c): idxs for c, idxs in groups.items()}
+
+        groups = st.session_state.get("p_groups", {})
+        for cid, idxs in groups.items():
+            with st.expander(f"묶음 {cid} — {len(idxs)}개 지문"):
+                for i in idxs:
+                    st.write(f"- {pbank.sets[i]['passage'][:80]}")
+                tname = st.text_input(f"이 묶음의 유형 이름", key=f"p_tname_{cid}",
+                                      placeholder="수업대화록형")
+                if st.button(f"이 묶음에 유형 적용", key=f"p_apply_{cid}"):
+                    if tname.strip():
+                        for i in idxs:
+                            pbank.set_type(pbank.sets[i]["id"], tname.strip())
+                        pbank.save(paths.passage_path(subject))
+                        st.success(f"묶음 {cid} → '{tname}' 유형 적용")
+                        st.rerun()
+    elif len(pbank.sets) < 4:
+        st.info(f"지문이 4개 이상 쌓이면 자동 묶기가 활성화됩니다(현재 {len(pbank.sets)}개). "
+                "데이터가 적으면 묶음이 엉성하니, 좀 모은 뒤 묶는 걸 권해요.")
+
+    # ── 유형별 지문 모아보기(외우기) ────────────────────────
+    if pbank.types():
+        st.markdown("---")
+        st.write("**📖 유형별 지문 모아보기(통으로 익히기)**")
+        sel = st.selectbox("유형", pbank.types(), key="p_typesel")
+        for s in pbank.by_type(sel):
+            with st.expander(f"[{s['year']} {s['level']}] {s['passage'][:40]}..."):
+                st.write("**지문**"); st.write(s["passage"])
+                if s["questions"]:
+                    st.write("**딸린 문제**")
+                    for q in s["questions"]:
+                        st.write(f"- {q}")
+                st.caption(f"출처: {s['source']}")
